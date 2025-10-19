@@ -1,0 +1,6 @@
+@PF.Sol.EC.Pedidos_HostAddress = http://localhost:5071
+
+GET {{PF.Sol.EC.Pedidos_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
