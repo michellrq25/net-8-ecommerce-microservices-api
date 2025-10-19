@@ -44,7 +44,6 @@ namespace PF.Sol.EC.Consultas.Application.Services
                 _logger.LogError(ex, "Error inesperado al crear consulta para pedido {IdPedido}", createConsultaDto.IdPedido);
                 return null!;
             }
-
         }
 
         public Task<bool> DeletePedidoAsync(string id)
