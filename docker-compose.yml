@@ -1,0 +1,199 @@
+services:
+  # SQL Server for Saldos
+  sqlserver-pedidos:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlserver-pedidos
+    environment:
+      ACCEPT_EULA: Y
+      SA_PASSWORD: YourStrong@Passw0rd
+      MSSQL_PID: Express
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_pedidos_data:/var/opt/mssql
+    networks:
+      - sol-ec-network
+   
+  # MySQL for Pagos
+  mysql-pagos:
+    image: mysql:8.0
+    container_name: mysql-pagos
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: Pagos
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_pagos_data:/var/lib/mysql
+    networks:
+      - sol-ec-network
+   
+  # MongoDB for Consultas      
+  mongodb-consultas:
+    image: mongo:7.0
+    container_name: mongodb-consultas
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_consultas_data:/data/db
+    networks:
+      - sol-ec-network
+
+  kafka:
+    image: bitnamilegacy/kafka:3.6.0
+    container_name: kafka
+    ports:
+      - "9092:9092"   # clientes fuera de Docker (tu .NET)
+    environment:
+      - KAFKA_ENABLE_KRAFT=yes
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_KRAFT_CLUSTER_ID=OvVYk0JwQb2nB3m3H6Y2xw
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_INTERNAL://:9094
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:9094
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT_INTERNAL
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    volumes:
+      - kafka_data:/bitnami/kafka
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    networks:
+      - sol-ec-network
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8085:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9094
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - sol-ec-network
+  
+  # PostgreSQL for Keycloack 
+  postgres-kc:
+    image: postgres:16
+    container_name: postgres-kc
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    ports:
+      - "5432:5432"        # opcional: expón si usarás psql/pgadmin desde host
+    volumes:
+      - postgres_kc_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      
+  # Keycloack
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.2
+    container_name: keycloak
+    depends_on:
+      postgres-kc:
+        condition: service_healthy
+    environment:
+      # Admin inicial (solo para primer arranque)
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+
+      # DB
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-kc:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+
+      # Salud/Métricas (útil en dev/ops)
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+
+      # Hostname/Proxy (útil en local y detrás de reverse proxies)
+      KC_PROXY_HEADERS: "xforwarded"
+      KC_HOSTNAME_STRICT: "false"
+    command:
+      - start
+      - --http-enabled=true
+      - --hostname-strict=false
+      - --metrics-enabled=true
+      - --health-enabled=true
+      # - --http-port=8080     # cambia el puerto si lo necesitas
+      # - --proxy=edge         # ejemplo si usas proxy tipo Nginx/Traefik
+    ports:
+      - "8080:8080"
+    volumes:
+      - kc_data:/opt/keycloak/data
+    
+  # Jaeger
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: jaeger
+    ports:
+      - "16686:16686" # UI de Jaeger
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    environment:
+      # Nivel de logs; puedes subirlo a "debug" si quieres ver más detalle
+      - LOG_LEVEL=debug
+      - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_OTLP_HTTP_ENABLED=true      
+    restart: unless-stopped
+    
+  # # ElasticSearch
+  # elasticsearch:
+    # image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+    # container_name: elasticsearch
+    # environment:
+      # - discovery.type=single-node
+      # - xpack.security.enabled=false        # <-- DEV: sin usuario/contraseña
+      # - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    # ports:
+      # - "9200:9200"
+      # - "9300:9300"
+    # healthcheck:
+      # test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      # interval: 10s
+      # timeout: 5s
+      # retries: 30
+      
+  # # Kibana
+  # kibana:
+    # image: docker.elastic.co/kibana/kibana:8.14.0
+    # container_name: kibana
+    # environment:
+      # - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    # depends_on:
+      # elasticsearch:
+        # condition: service_healthy
+    # ports:
+      # - "5601:5601"
+
+volumes:
+  sqlserver_pedidos_data:
+  mysql_pagos_data:
+  mongodb_consultas_data:
+  kafka_data:
+  postgres_kc_data:
+  kc_data:
+
+networks:
+  sol-ec-network:
+    driver: bridge
